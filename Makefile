@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-obj-m += pdd.o
+obj-m += pseud.o
 
 
 VERSION := $(shell uname -r)

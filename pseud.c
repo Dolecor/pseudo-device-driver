@@ -8,24 +8,25 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/platform_device.h>
 
-#include "pdd.h"
+#include "pseud.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("Dmitry Dolenko <dolenko.dv@yandex.ru>");
 // MODULE_DESCRIPTION();
 // MODULE_DEVICE_TABLE();
 
-static int __init pdd_init(void)
+static int __init pseud_init(void)
 {
     pr_info("%s: test init\n", THIS_MODULE->name);
     return 0;
 }
 
-static void __exit pdd_exit(void)
+static void __exit pseud_exit(void)
 {
     pr_info("%s: test exit\n", THIS_MODULE->name);
 }
 
-module_init(pdd_init);
-module_exit(pdd_exit);
+module_init(pseud_init);
+module_exit(pseud_exit);

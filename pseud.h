@@ -5,9 +5,9 @@
  * Copyright (c) 2022 Dmitry Dolenko
  */
 
-#ifndef PDD_H
-#define PDD_H
+#ifndef PSEUD_H
+#define PSEUD_H
 
 
 
-#endif /* PDD_H */
+#endif /* PSEUD_H */
