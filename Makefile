@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 
 obj-m += pseud.o
+ccflags-y += -std=gnu11
 
 
 VERSION := $(shell uname -r)
