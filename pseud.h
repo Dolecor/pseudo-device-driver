@@ -22,11 +22,12 @@
 #define MAX_PSEUD BITS_PER_LONG
 #define PSEUD_MINORS MAX_PSEUD
 
-#define DEVMEM_LEN 4096
+#define DEVMEM_LEN PAGE_SIZE
 
-struct pseud_device_data {
+struct pseud_data {
     char *devmem;
 
+    u32 id;
     struct list_head list;
     struct cdev cdev;
 };

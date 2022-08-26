@@ -10,6 +10,9 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/fs.h>
+#include <linux/list.h>
+#include <linux/slab.h>
+#include <linux/spinlock.h>
 
 #include "pseud.h"
 
@@ -17,8 +20,80 @@ MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("Dmitry Dolenko <dolenko.dv@yandex.ru>");
 MODULE_DESCRIPTION("Pseudo-device driver");
 
-static u16 pseud_major; /* actual major number*/
+static u32 pseud_major; /* actual major number*/
 static struct class *pseud_class;
+
+/* List of all successfully probed devices */
+static LIST_HEAD(pseud_list);
+/* Bitmap for managing the available device ids */
+static DECLARE_BITMAP(pseud_list_ids, PSEUD_MINORS);
+static struct spinlock pseud_list_lock;
+
+int pseud_open(struct inode *, struct file *);
+ssize_t pseud_read(struct file *, char __user *, size_t, loff_t *);
+ssize_t pseud_write(struct file *, const char __user *uf, size_t, loff_t *);
+int pseud_release(struct inode *, struct file *);
+loff_t pseud_llseek(struct file *, loff_t, int);
+int pseud_mmap(struct file *, struct vm_area_struct *);
+
+static struct file_operations pseud_ops = {
+    .owner = THIS_MODULE,
+    .open = &pseud_open,
+    .read = &pseud_read,
+    .write = &pseud_write,
+    .release = &pseud_release,
+    .llseek = &pseud_llseek,
+    .mmap = &pseud_mmap,
+};
+
+static int init_pseud_data(struct pseud_data *pseud_data,
+                           const struct platform_device *pdev)
+{
+    struct device *dev;
+    int err;
+
+    pseud_data->devmem = kzalloc(DEVMEM_LEN, GFP_KERNEL);
+    if (!pseud_data->devmem) {
+        err = -ENOMEM;
+        goto fail_alloc_devmem;
+    }
+
+    cdev_init(&pseud_data->cdev, &pseud_ops);
+    pseud_data->cdev.owner = THIS_MODULE;
+
+    err = cdev_add(&pseud_data->cdev, MKDEV(pseud_major, PSEUD_BASEMINOR),
+                   PSEUD_MINORS);
+    if (err) {
+        dev_err(&pdev->dev, "cdev_add failed\n");
+        cdev_del(&pseud_data->cdev);
+        goto fail_cdev_add;
+    }
+
+    dev = device_create(pseud_class, NULL, MKDEV(pseud_major, pdev->id), NULL,
+                        "%s_%d", pdev->name, pdev->id);
+    if (IS_ERR(dev)) {
+        dev_err(&pdev->dev, "device_create failed\n");
+        err = PTR_ERR(dev);
+        goto fail_device_create;
+    }
+
+    return 0;
+
+fail_device_create:
+    cdev_del(&pseud_data->cdev);
+fail_cdev_add:
+    kfree(pseud_data->devmem);
+fail_alloc_devmem:
+    return err;
+}
+
+static void free_pseud_data(struct pseud_data *pseud_data,
+                            const struct platform_device *pdev)
+{
+    device_destroy(pseud_class, MKDEV(pseud_major, pdev->id));
+    cdev_del(&pseud_data->cdev);
+    kfree(pseud_data->devmem);
+}
 
 int pseud_open(struct inode *inode, struct file *filp)
 {
@@ -58,63 +133,66 @@ int pseud_mmap(struct file *filp, struct vm_area_struct *vma)
     return 0;
 }
 
-static struct file_operations pseud_ops = {
-    .owner = THIS_MODULE,
-    .open = &pseud_open,
-    .read = &pseud_read,
-    .write = &pseud_write,
-    .release = &pseud_release,
-    .llseek = &pseud_llseek,
-    .mmap = &pseud_mmap,
-};
-
 static int pseud_driver_probe(struct platform_device *pdev)
 {
-    struct cdev *cdev;
+    struct pseud_data *pseud_data;
     int err;
 
-    pr_info("%s: probe\n", THIS_MODULE->name);
+    if (test_bit(pdev->id, pseud_list_ids)) {
+        dev_err(
+            &pdev->dev,
+            "device with specified id (minor number) is already registered\n");
+        err = -EINVAL;
+        goto fail;
+    }
 
-    // TODO: change to:
-    // kzalloc pseud_device_data
-    // use cdev_init(pseud_dev_data->cdev) instead of cdev_alloc
+    pseud_data = kzalloc(sizeof(struct pseud_data), GFP_KERNEL);
+    if (!pseud_data) {
+        err = -ENOMEM;
+        goto fail;
+    }
 
-    cdev = cdev_alloc();
-
-    cdev->owner = THIS_MODULE;
-    cdev->ops = &pseud_ops;
-    cdev->dev = MKDEV(pseud_major, PSEUD_BASEMINOR);
-
-    err = cdev_add(cdev, cdev->dev, PSEUD_MINORS);
+    err = init_pseud_data(pseud_data, pdev);
     if (err) {
-        pr_info("can not add cdev");
-        cdev_del(cdev);
-        return err;
+        dev_err(&pdev->dev, "init_pseud_data failed\n");
+        goto fail_init_pseud_data;
     }
 
-    if (device_create(pseud_class, NULL, MKDEV(pseud_major, pdev->id), NULL,
-                      "pseud_%d", pdev->id)) {
-        pr_info("cdev pseud_%d created", pdev->id);
-    } else {
-        pr_err("failed to create cdev\n");
-    }
+    pseud_data->id = pdev->id;
 
-    platform_set_drvdata(pdev, cdev);
+    platform_set_drvdata(pdev, pseud_data);
+
+    spin_lock(&pseud_list_lock);
+    set_bit(pseud_data->id, pseud_list_ids);
+    list_add(&pseud_data->list, &pseud_list);
+    spin_unlock(&pseud_list_lock);
+
+    dev_info(&pdev->dev, "created\n");
 
     return 0;
+
+fail_init_pseud_data:
+    kfree(pseud_data);
+fail:
+    return err;
 }
 
 static int pseud_driver_remove(struct platform_device *pdev)
 {
-    struct cdev *cdev;
+    struct pseud_data *pseud_data;
 
-    pr_info("%s: remove\n", THIS_MODULE->name);
+    pseud_data = platform_get_drvdata(pdev);
 
-    cdev = platform_get_drvdata(pdev);
+    spin_lock(&pseud_list_lock);
+    list_del(&pseud_data->list);
+    clear_bit(pseud_data->id, pseud_list_ids);
+    spin_unlock(&pseud_list_lock);
 
-    device_destroy(pseud_class, MKDEV(pseud_major, MINOR(cdev->dev)));
+    free_pseud_data(pseud_data, pdev);
 
-    cdev_del(cdev);
+    kfree(pseud_data);
+
+    dev_info(&pdev->dev, "removed\n");
 
     return 0;
 }
@@ -130,10 +208,10 @@ static struct platform_driver pseud_driver = {
 
 void pseud_device_release(struct device *dev)
 {
-    pr_info("Pseud device release\n");
+    dev_info(dev, "released\n");
 }
 
-static struct platform_device pseud_devices[] = {
+static struct platform_device pseud_devs_reg[] = {
     {
         .name = DRIVER_NAME,
         .id = 0,
@@ -187,8 +265,8 @@ static int __init pseud_init(void)
         goto fail_class_create;
     }
 
-    for (nr_reg = 0; nr_reg < ARRAY_SIZE(pseud_devices); ++nr_reg) {
-        ret = platform_device_register(&pseud_devices[nr_reg]);
+    for (nr_reg = 0; nr_reg < ARRAY_SIZE(pseud_devs_reg); ++nr_reg) {
+        ret = platform_device_register(&pseud_devs_reg[nr_reg]);
         if (ret < 0) {
             pr_err("Can not register platform device (retcode: %d)\n", ret);
             goto fail_pdev_reg;
@@ -201,7 +279,8 @@ static int __init pseud_init(void)
         goto fail_pdrv_reg;
     }
 
-    pr_info("Pseud registered with major number %u\n", pseud_major);
+    pr_info("%s driver registered with major number %u\n", THIS_MODULE->name,
+            pseud_major);
 
     return 0;
 
@@ -210,10 +289,9 @@ fail_pdrv_reg:
 
 fail_pdev_reg:
     for (int i = 0; i < nr_reg; ++i) {
-        platform_device_unregister(&pseud_devices[i]);
+        platform_device_unregister(&pseud_devs_reg[i]);
     }
 
-    class_unregister(pseud_class);
     class_destroy(pseud_class);
 
 fail_class_create:
@@ -231,10 +309,10 @@ static void __exit pseud_exit(void)
 
     platform_driver_unregister(&pseud_driver);
 
-    for (int i = 0; i < ARRAY_SIZE(pseud_devices); ++i) {
-        platform_device_unregister(&pseud_devices[i]);
+    for (int i = 0; i < ARRAY_SIZE(pseud_devs_reg); ++i) {
+        platform_device_unregister(&pseud_devs_reg[i]);
     }
-    
+
     class_destroy(pseud_class);
 
     dev = MKDEV(pseud_major, PSEUD_BASEMINOR);
