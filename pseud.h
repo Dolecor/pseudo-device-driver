@@ -10,7 +10,7 @@
 
 #include <linux/platform_device.h>
 #include <linux/cdev.h>
-#include <linux/list.h>
+#include <linux/mutex.h>
 
 #define DRIVER_NAME "pseud"
 #define PSEUD_MAJOR 0 /* 0 for dynamic registration */
@@ -26,9 +26,7 @@
 
 struct pseud_data {
     char *devmem;
-
-    u32 id;
-    struct list_head list;
+    struct mutex devmem_mtx;
     struct cdev cdev;
 };
 
