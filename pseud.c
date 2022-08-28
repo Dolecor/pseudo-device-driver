@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/uaccess.h>
+#include <linux/mm.h>
 
 #include "pseud.h"
 
@@ -60,7 +61,6 @@ static int init_pseud_data(struct pseud_data *pseud_data,
     err = cdev_add(&pseud_data->cdev, MKDEV(pseud_major, pdev->id), 1);
     if (err) {
         dev_err(&pdev->dev, "cdev_add failed\n");
-        cdev_del(&pseud_data->cdev);
         goto fail_cdev_add;
     }
 
@@ -97,8 +97,8 @@ int pseud_open(struct inode *inode, struct file *filp)
     data = container_of(inode->i_cdev, struct pseud_data, cdev);
     filp->private_data = data;
 
-    pr_debug("%s: opened (major %d, minor %d)\n", filp->f_path.dentry->d_iname,
-             imajor(inode), iminor(inode));
+    pr_debug("%s: %s (major %d, minor %d)\n", __func__,
+             filp->f_path.dentry->d_iname, imajor(inode), iminor(inode));
 
     return 0;
 }
@@ -137,7 +137,8 @@ ssize_t pseud_read(struct file *filp, char __user *buf, size_t count,
 
 out:
     mutex_unlock(&data->devmem_mtx);
-    pr_debug("%s: read %zd bytes\n", filp->f_path.dentry->d_iname, ret);
+    pr_debug("%s: %s (read %zd bytes)\n", __func__,
+             filp->f_path.dentry->d_iname, ret);
     return ret;
 }
 
@@ -171,26 +172,79 @@ ssize_t pseud_write(struct file *filp, const char __user *buf, size_t count,
 
 out:
     mutex_unlock(&data->devmem_mtx);
-    pr_debug("%s: written %zd bytes\n", filp->f_path.dentry->d_iname, ret);
+    pr_debug("%s: %s (written %zd bytes)\n", __func__,
+             filp->f_path.dentry->d_iname, ret);
     return ret;
 }
 
 int pseud_release(struct inode *inode, struct file *filp)
 {
     filp->private_data = NULL;
-    pr_debug("%s: closed\n", filp->f_path.dentry->d_iname);
+    pr_debug("%s: %s\n", __func__, filp->f_path.dentry->d_iname);
     return 0;
 }
 
 loff_t pseud_llseek(struct file *filp, loff_t off, int whence)
 {
-    pr_info("%s is not implemented", __func__);
-    return 0;
+    struct pseud_data *data = filp->private_data;
+    loff_t new_pos;
+
+    mutex_lock(&data->devmem_mtx);
+
+    switch (whence) {
+    case SEEK_SET:
+        new_pos = off;
+        break;
+    case SEEK_CUR:
+        new_pos = filp->f_pos + off;
+        break;
+    case SEEK_END:
+        new_pos = DEVMEM_LEN + off;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    if (new_pos > DEVMEM_LEN) {
+        new_pos = DEVMEM_LEN;
+    }
+    if (new_pos < 0) {
+        new_pos = 0;
+    }
+
+    filp->f_pos = new_pos;
+
+    mutex_unlock(&data->devmem_mtx);
+    pr_debug("%s: %s (new pos: %lld)\n", __func__, filp->f_path.dentry->d_iname,
+             new_pos);
+    return new_pos;
 }
 
 int pseud_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-    pr_info("%s is not implemented", __func__);
+    int err;
+    struct pseud_data *data = filp->private_data;
+    struct page *page;
+    size_t size = vma->vm_end - vma->vm_start;
+    unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+
+    if (!virt_addr_valid(data->devmem)) {
+        pr_err("virt_addr_valid failed\n");
+        return -EIO;
+    }
+    page = virt_to_page(data->devmem + offset);
+
+    err = remap_pfn_range(vma, vma->vm_start, page_to_pfn(page), size,
+                          vma->vm_page_prot);
+
+    if (err) {
+        pr_err("remap_pfn_range failed for %s (%d)\n",
+               filp->f_path.dentry->d_iname, err);
+        return err;
+    }
+
+    pr_debug("%s: %s\n", __func__, filp->f_path.dentry->d_iname);
+
     return 0;
 }
 
