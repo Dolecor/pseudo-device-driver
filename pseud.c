@@ -14,6 +14,7 @@
 #include <linux/mutex.h>
 #include <linux/uaccess.h>
 #include <linux/mm.h>
+#include <linux/sysfs.h>
 
 #include "pseud.h"
 
@@ -24,12 +25,13 @@ MODULE_DESCRIPTION("Pseudo-device driver");
 static u32 pseud_major; /* actual major number */
 static struct class *pseud_class;
 
-int pseud_open(struct inode *, struct file *);
-ssize_t pseud_read(struct file *, char __user *, size_t, loff_t *);
-ssize_t pseud_write(struct file *, const char __user *uf, size_t, loff_t *);
-int pseud_release(struct inode *, struct file *);
-loff_t pseud_llseek(struct file *, loff_t, int);
-int pseud_mmap(struct file *, struct vm_area_struct *);
+static int pseud_open(struct inode *, struct file *);
+static ssize_t pseud_read(struct file *, char __user *, size_t, loff_t *);
+static ssize_t pseud_write(struct file *, const char __user *uf, size_t,
+                           loff_t *);
+static int pseud_release(struct inode *, struct file *);
+static loff_t pseud_llseek(struct file *, loff_t, int);
+static int pseud_mmap(struct file *, struct vm_area_struct *);
 
 static struct file_operations pseud_ops = {
     .owner = THIS_MODULE,
@@ -41,10 +43,115 @@ static struct file_operations pseud_ops = {
     .mmap = &pseud_mmap,
 };
 
-static int init_pseud_data(struct pseud_data *pseud_data,
-                           const struct platform_device *pdev)
+static ssize_t address_show(struct device *, struct device_attribute *, char *);
+static ssize_t address_store(struct device *, struct device_attribute *,
+                             const char *, size_t);
+static ssize_t value_show(struct device *, struct device_attribute *, char *);
+static ssize_t value_store(struct device *, struct device_attribute *,
+                           const char *, size_t);
+
+static int init_pseud_sysfs(struct pseud_data *pseud_data,
+                            struct platform_device *pdev)
 {
-    struct device *dev;
+    int err;
+    dev_t devt = MKDEV(pseud_major, pdev->id);
+
+    pseud_data->dev = device_create(pseud_class, &pdev->dev, devt, pseud_data,
+                                    "%s_%d", pdev->name, pdev->id);
+
+    if (IS_ERR(pseud_data->dev)) {
+        dev_err(&pdev->dev, "device_create failed\n");
+        err = PTR_ERR(pseud_data->dev);
+        goto fail;
+    }
+
+    sysfs_attr_init(pseud_data->address_attr);
+    pseud_data->address_attr.attr.name = ADDRESS_ATTR_NAME;
+    pseud_data->address_attr.attr.mode = S_IRUGO | S_IWUSR; /* 0644 */
+    pseud_data->address_attr.show = address_show;
+    pseud_data->address_attr.store = address_store;
+    err = device_create_file(pseud_data->dev, &pseud_data->address_attr);
+    if (err) {
+        goto fail_attr;
+    }
+
+    sysfs_attr_init(pseud_data->value_attr);
+    pseud_data->value_attr.attr.name = VALUE_ATTR_NAME;
+    pseud_data->value_attr.attr.mode = S_IRUGO | S_IWUSR; /* 0644 */
+    pseud_data->value_attr.show = value_show;
+    pseud_data->value_attr.store = value_store;
+    err = device_create_file(pseud_data->dev, &pseud_data->value_attr);
+    if (err) {
+        device_remove_file(pseud_data->dev, &pseud_data->address_attr);
+        goto fail_attr;
+    }
+
+    return 0;
+
+fail_attr:
+    device_destroy(pseud_class, devt);
+fail:
+    return err;
+}
+
+static void free_pseud_sysfs(struct pseud_data *pseud_data,
+                             const struct platform_device *pdev)
+{
+    device_remove_file(pseud_data->dev, &pseud_data->address_attr);
+    device_remove_file(pseud_data->dev, &pseud_data->value_attr);
+    device_destroy(pseud_class, MKDEV(pseud_major, pdev->id));
+}
+
+static ssize_t address_show(struct device *dev, struct device_attribute *attr,
+                            char *buf)
+{
+    struct pseud_data *data = dev_get_drvdata(dev);
+    return sprintf(buf, "%lld\n", data->address);
+}
+
+static ssize_t address_store(struct device *dev, struct device_attribute *attr,
+                             const char *buf, size_t count)
+{
+    struct pseud_data *data = dev_get_drvdata(dev);
+    loff_t address;
+
+    if ((sscanf(buf, "%lld", &address) != 1) || (address < 0)
+        || (address > DEVMEM_LEN - 1)) {
+        dev_err(dev, "invalid address\n");
+        return -EINVAL;
+    }
+
+    data->address = address;
+
+    return count;
+}
+
+static ssize_t value_show(struct device *dev, struct device_attribute *attr,
+                          char *buf)
+{
+    struct pseud_data *data = dev_get_drvdata(dev);
+    return sprintf(buf, "%u\n", data->devmem[data->address]);
+}
+
+static ssize_t value_store(struct device *dev, struct device_attribute *attr,
+                           const char *buf, size_t count)
+{
+    struct pseud_data *data = dev_get_drvdata(dev);
+    s32 value;
+
+    if ((sscanf(buf, "%d", &value) != 1) || (value < 0) || (value > 255)) {
+        dev_err(dev, "invalid value\n");
+        return -EINVAL;
+    }
+
+    data->devmem[data->address] = (u8)value;
+
+    return count;
+}
+
+static int init_pseud_data(struct pseud_data *pseud_data,
+                           struct platform_device *pdev)
+{
     int err;
 
     pseud_data->devmem = kzalloc(DEVMEM_LEN, GFP_KERNEL);
@@ -64,17 +171,15 @@ static int init_pseud_data(struct pseud_data *pseud_data,
         goto fail_cdev_add;
     }
 
-    dev = device_create(pseud_class, NULL, MKDEV(pseud_major, pdev->id), NULL,
-                        "%s_%d", pdev->name, pdev->id);
-    if (IS_ERR(dev)) {
-        dev_err(&pdev->dev, "device_create failed\n");
-        err = PTR_ERR(dev);
-        goto fail_device_create;
+    err = init_pseud_sysfs(pseud_data, pdev);
+    if (err) {
+        pr_debug("init_pseud_sysfs failed\n");
+        goto fail_sysfs;
     }
 
     return 0;
 
-fail_device_create:
+fail_sysfs:
     cdev_del(&pseud_data->cdev);
 fail_cdev_add:
     kfree(pseud_data->devmem);
@@ -85,12 +190,12 @@ fail_alloc_devmem:
 static void free_pseud_data(struct pseud_data *pseud_data,
                             const struct platform_device *pdev)
 {
-    device_destroy(pseud_class, MKDEV(pseud_major, pdev->id));
+    free_pseud_sysfs(pseud_data, pdev);
     cdev_del(&pseud_data->cdev);
     kfree(pseud_data->devmem);
 }
 
-int pseud_open(struct inode *inode, struct file *filp)
+static int pseud_open(struct inode *inode, struct file *filp)
 {
     struct pseud_data *data;
 
@@ -103,8 +208,8 @@ int pseud_open(struct inode *inode, struct file *filp)
     return 0;
 }
 
-ssize_t pseud_read(struct file *filp, char __user *buf, size_t count,
-                   loff_t *off)
+static ssize_t pseud_read(struct file *filp, char __user *buf, size_t count,
+                          loff_t *off)
 {
     struct pseud_data *data = filp->private_data;
     ssize_t ret = 0;
@@ -121,7 +226,7 @@ ssize_t pseud_read(struct file *filp, char __user *buf, size_t count,
 
     if (*off >= DEVMEM_LEN) {
         ret = 0;
-        goto out;
+        goto fail;
     }
     if (*off + count > DEVMEM_LEN) {
         count = DEVMEM_LEN - *off;
@@ -129,21 +234,21 @@ ssize_t pseud_read(struct file *filp, char __user *buf, size_t count,
 
     if (copy_to_user(buf, data->devmem + *off, count)) {
         ret = -EFAULT;
-        goto out;
+        goto fail;
     }
 
     *off += count;
     ret = count;
 
-out:
+fail:
     mutex_unlock(&data->devmem_mtx);
     pr_debug("%s: %s (read %zd bytes)\n", __func__,
              filp->f_path.dentry->d_iname, ret);
     return ret;
 }
 
-ssize_t pseud_write(struct file *filp, const char __user *buf, size_t count,
-                    loff_t *off)
+static ssize_t pseud_write(struct file *filp, const char __user *buf,
+                           size_t count, loff_t *off)
 {
     struct pseud_data *data = filp->private_data;
     ssize_t ret = 0;
@@ -177,14 +282,14 @@ out:
     return ret;
 }
 
-int pseud_release(struct inode *inode, struct file *filp)
+static int pseud_release(struct inode *inode, struct file *filp)
 {
     filp->private_data = NULL;
     pr_debug("%s: %s\n", __func__, filp->f_path.dentry->d_iname);
     return 0;
 }
 
-loff_t pseud_llseek(struct file *filp, loff_t off, int whence)
+static loff_t pseud_llseek(struct file *filp, loff_t off, int whence)
 {
     struct pseud_data *data = filp->private_data;
     loff_t new_pos;
@@ -220,7 +325,7 @@ loff_t pseud_llseek(struct file *filp, loff_t off, int whence)
     return new_pos;
 }
 
-int pseud_mmap(struct file *filp, struct vm_area_struct *vma)
+static int pseud_mmap(struct file *filp, struct vm_area_struct *vma)
 {
     int err;
     struct pseud_data *data = filp->private_data;
@@ -238,8 +343,7 @@ int pseud_mmap(struct file *filp, struct vm_area_struct *vma)
                           vma->vm_page_prot);
 
     if (err) {
-        pr_err("remap_pfn_range failed for %s (%d)\n",
-               filp->f_path.dentry->d_iname, err);
+        pr_err("remap_pfn_range failed for %s\n", filp->f_path.dentry->d_iname);
         return err;
     }
 
@@ -371,7 +475,7 @@ static int __init pseud_init(void)
         goto fail_pdrv_reg;
     }
 
-    pr_info("%s driver registered with major number %u\n", THIS_MODULE->name,
+    pr_info("%s registered with major number %u\n", THIS_MODULE->name,
             pseud_major);
 
     return 0;

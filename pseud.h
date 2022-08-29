@@ -11,6 +11,7 @@
 #include <linux/platform_device.h>
 #include <linux/cdev.h>
 #include <linux/mutex.h>
+#include <linux/sysfs.h>
 
 #define DRIVER_NAME "pseud"
 #define PSEUD_MAJOR 0 /* 0 for dynamic registration */
@@ -24,10 +25,20 @@
 
 #define DEVMEM_LEN PAGE_SIZE
 
+#define ADDRESS_ATTR_NAME "address"
+#define VALUE_ATTR_NAME "value"
+
 struct pseud_data {
-    char *devmem;
+    u8 *devmem;
     struct mutex devmem_mtx;
+
     struct cdev cdev;
+
+    /* sysfs */
+    struct device *dev;
+    loff_t address;
+    struct device_attribute address_attr;
+    struct device_attribute value_attr;
 };
 
 #endif /* PSEUD_H */
