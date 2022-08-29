@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: MIT
 
-obj-m += pseud.o
-ccflags-y += -std=gnu11 -DDEBUG
+all: module test
 
+module:
+	$(MAKE) -C ./module
 
-VERSION := $(shell uname -r)
-LINUX_HEADERS := /lib/modules/$(VERSION)/build
+module-clean:
+	$(MAKE) -C ./module clean
 
-PWD := $(shell pwd)
+test:
+	$(MAKE) -C ./test
 
-all:
-	make -C $(LINUX_HEADERS) M=$(PWD) modules
+test-clean:
+	$(MAKE) -C ./test clean
 
-clean:
-	make -C $(LINUX_HEADERS) M=$(PWD) clean
+clean: module-clean test-clean
+
+.PHONY: all clean module module-clean test test-clean
