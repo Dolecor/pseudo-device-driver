@@ -1,0 +1,3 @@
+README_md2pdf.md - это копия README.md из корневого каталога, но с измнениями для конвертации в формат pdf.
+
+Для конвертации используется плагин для VS Code [Markdown PDF](https://marketplace.visualstudio.com/items?itemName=yzane.markdown-pdf). [Markdown All in One](https://marketplace.visualstudio.com/items?itemName=yzhang.markdown-all-in-one) - для составления содержания.

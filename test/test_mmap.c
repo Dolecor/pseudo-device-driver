@@ -9,8 +9,8 @@
 
 #include "../module/pseud_defs.h"
 
-#define STR_START "hello, world!\n"
-#define STR_END "goodbye, world!\n"
+#define STR_START "hello, world!"
+#define STR_END "goodbye, world!"
 
 int main(void)
 {
@@ -19,9 +19,9 @@ int main(void)
     char *wr_ptr;
     off_t offset = 0;
     off_t wr_start = 0;
-    off_t wr_end = DEVMEM_LEN - 1 - sizeof(STR_END);
+    off_t wr_end = DEVMEM_LEN - sizeof(STR_END);
 
-    fd = open("/dev/pseud_0", O_RDWR);
+    fd = open("/dev/pseud_1", O_RDWR);
 
     if (fd == -1) {
         perror("open device file");

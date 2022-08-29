@@ -8,3 +8,5 @@
 *.mod.o
 modules.order
 Module.symvers
+
+test_mmap
