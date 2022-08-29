@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
-#define DEVMEM_LEN 4096
+#include "../module/pseud_defs.h"
 
 #define STR_START "hello, world!\n"
 #define STR_END "goodbye, world!\n"

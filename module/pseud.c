@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
+#include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
@@ -16,11 +17,24 @@
 #include <linux/mm.h>
 #include <linux/sysfs.h>
 
-#include "pseud.h"
+#include "pseud_defs.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("Dmitry Dolenko <dolenko.dv@yandex.ru>");
 MODULE_DESCRIPTION("Pseudo-device driver");
+
+struct pseud_data {
+    u8 *devmem;
+    struct mutex devmem_mtx;
+
+    struct cdev cdev;
+
+    /* sysfs */
+    struct device *dev;
+    loff_t address;
+    struct device_attribute address_attr;
+    struct device_attribute value_attr;
+};
 
 static u32 pseud_major; /* actual major number */
 static struct class *pseud_class;
@@ -173,7 +187,7 @@ static int init_pseud_data(struct pseud_data *pseud_data,
 
     err = init_pseud_sysfs(pseud_data, pdev);
     if (err) {
-        pr_debug("init_pseud_sysfs failed\n");
+        dev_err(&pdev->dev, "init_pseud_sysfs failed\n");
         goto fail_sysfs;
     }
 
@@ -499,7 +513,7 @@ fail_alloc_cregion:
 
 static void __exit pseud_exit(void)
 {
-    dev_t dev;
+    dev_t dev = MKDEV(pseud_major, PSEUD_BASEMINOR);
 
     pr_info("%s: Exit\n", THIS_MODULE->name);
 
@@ -511,7 +525,6 @@ static void __exit pseud_exit(void)
 
     class_destroy(pseud_class);
 
-    dev = MKDEV(pseud_major, PSEUD_BASEMINOR);
     unregister_chrdev_region(dev, PSEUD_MINORS);
 }
 
