@@ -71,7 +71,18 @@ $ sudo insmod pseud.ko
 > ```
 > Вывод команды `ls /sys/class/pseud/pseud_0`:
 > ```
-> address  dev  device  power  subsystem  uevent  value
+> dev  power  subsystem  uevent
+> ```
+> Вывод команды `ls /sys/devices/platform/pseud.*`:
+> ```
+> /sys/devices/platform/pseud.0:
+> address  driver  driver_override  modalias  power  subsystem  uevent  value
+> 
+> /sys/devices/platform/pseud.1:
+> address  driver  driver_override  modalias  power  subsystem  uevent  value
+> 
+> /sys/devices/platform/pseud.2:
+> address  driver  driver_override  modalias  power  subsystem  uevent  value
 > ```
 
 Чтобы выгрузить модуль надо выполнить:

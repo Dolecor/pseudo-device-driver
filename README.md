@@ -49,7 +49,18 @@ $ sudo insmod pseud.ko
 > ```
 > Вывод команды `ls /sys/class/pseud/pseud_0`:
 > ```
-> address  dev  device  power  subsystem  uevent  value
+> dev  power  subsystem  uevent
+> ```
+> Вывод команды `ls /sys/devices/platform/pseud.*`:
+> ```
+> /sys/devices/platform/pseud.0:
+> address  driver  driver_override  modalias  power  subsystem  uevent  value
+> 
+> /sys/devices/platform/pseud.1:
+> address  driver  driver_override  modalias  power  subsystem  uevent  value
+> 
+> /sys/devices/platform/pseud.2:
+> address  driver  driver_override  modalias  power  subsystem  uevent  value
 > ```
 
 Чтобы выгрузить модуль надо выполнить:
@@ -67,7 +78,7 @@ $ sudo rmmod pseud
 > [12785.476385] platform pseud.1: released
 > [12785.476398] platform pseud.2: released
 > ```
-> Команды `lsmod | grep pseud`, `ls /dev/pseud*` и `ls /sys/class/pseud/` теперь не должны давать результата.
+> Команды `lsmod | grep pseud`, `ls /dev/pseud*`, `ls /sys/class/pseud/` и `ls /sys/devices/platform/pseud.*` теперь не должны давать результата.
 
 # Интерфейс драйвера
 Для доступа к области данных устройства драйвер предоставляет символьное устройство и атрибуты в файловой системе sysfs.

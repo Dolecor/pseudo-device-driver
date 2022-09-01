@@ -30,10 +30,7 @@ struct pseud_data {
     struct cdev cdev;
 
     /* sysfs */
-    struct device *dev;
     loff_t address;
-    struct device_attribute address_attr;
-    struct device_attribute value_attr;
 };
 
 static u32 pseud_major; /* actual major number */
@@ -64,57 +61,16 @@ static ssize_t value_show(struct device *, struct device_attribute *, char *);
 static ssize_t value_store(struct device *, struct device_attribute *,
                            const char *, size_t);
 
-static int init_pseud_sysfs(struct pseud_data *pseud_data,
-                            struct platform_device *pdev)
-{
-    int err;
-    dev_t devt = MKDEV(pseud_major, pdev->id);
+DEVICE_ATTR_RW(address);
+DEVICE_ATTR_RW(value);
 
-    pseud_data->dev = device_create(pseud_class, &pdev->dev, devt, pseud_data,
-                                    "%s_%d", pdev->name, pdev->id);
+static struct attribute *pseud_byte_access_attrs[] = {
+    &dev_attr_address.attr,
+    &dev_attr_value.attr,
+    NULL,
+};
 
-    if (IS_ERR(pseud_data->dev)) {
-        dev_err(&pdev->dev, "device_create failed\n");
-        err = PTR_ERR(pseud_data->dev);
-        goto fail;
-    }
-
-    sysfs_attr_init(pseud_data->address_attr);
-    pseud_data->address_attr.attr.name = ADDRESS_ATTR_NAME;
-    pseud_data->address_attr.attr.mode = S_IRUGO | S_IWUSR; /* 0644 */
-    pseud_data->address_attr.show = address_show;
-    pseud_data->address_attr.store = address_store;
-    err = device_create_file(pseud_data->dev, &pseud_data->address_attr);
-    if (err) {
-        goto fail_attr;
-    }
-
-    sysfs_attr_init(pseud_data->value_attr);
-    pseud_data->value_attr.attr.name = VALUE_ATTR_NAME;
-    pseud_data->value_attr.attr.mode = S_IRUGO | S_IWUSR; /* 0644 */
-    pseud_data->value_attr.show = value_show;
-    pseud_data->value_attr.store = value_store;
-    err = device_create_file(pseud_data->dev, &pseud_data->value_attr);
-    if (err) {
-        device_remove_file(pseud_data->dev, &pseud_data->address_attr);
-        goto fail_attr;
-    }
-
-    return 0;
-
-fail_attr:
-    device_destroy(pseud_class, devt);
-fail:
-    return err;
-}
-
-static void free_pseud_sysfs(struct pseud_data *pseud_data,
-                             const struct platform_device *pdev)
-{
-    device_remove_file(pseud_data->dev, &pseud_data->address_attr);
-    device_remove_file(pseud_data->dev, &pseud_data->value_attr);
-    device_destroy(pseud_class, MKDEV(pseud_major, pdev->id));
-}
+ATTRIBUTE_GROUPS(pseud_byte_access);
 
 static ssize_t address_show(struct device *dev, struct device_attribute *attr,
                             char *buf)
@@ -167,6 +123,8 @@ static int init_pseud_data(struct pseud_data *pseud_data,
                            struct platform_device *pdev)
 {
     int err;
+    struct device *dev;
+    dev_t devt = MKDEV(pseud_major, pdev->id);
 
     pseud_data->devmem = kzalloc(DEVMEM_LEN, GFP_KERNEL);
     if (!pseud_data->devmem) {
@@ -179,21 +137,31 @@ static int init_pseud_data(struct pseud_data *pseud_data,
     cdev_init(&pseud_data->cdev, &pseud_ops);
     pseud_data->cdev.owner = THIS_MODULE;
 
-    err = cdev_add(&pseud_data->cdev, MKDEV(pseud_major, pdev->id), 1);
+    err = cdev_add(&pseud_data->cdev, devt, 1);
     if (err) {
         dev_err(&pdev->dev, "cdev_add failed\n");
         goto fail_cdev_add;
     }
 
-    err = init_pseud_sysfs(pseud_data, pdev);
+    dev = device_create(pseud_class, NULL, devt, NULL, "%s_%d", pdev->name,
+                        pdev->id);
+    if (IS_ERR(dev)) {
+        dev_err(&pdev->dev, "device_create failed\n");
+        err = PTR_ERR(dev);
+        goto fail_dev_create;
+    }
+
+    err = sysfs_create_group(&pdev->dev.kobj, &pseud_byte_access_group);
     if (err) {
-        dev_err(&pdev->dev, "init_pseud_sysfs failed\n");
+        dev_err(&pdev->dev, "sysfs_create_group failed\n");
         goto fail_sysfs;
     }
 
     return 0;
 
 fail_sysfs:
+    device_destroy(pseud_class, devt);
+fail_dev_create:
     cdev_del(&pseud_data->cdev);
 fail_cdev_add:
     kfree(pseud_data->devmem);
@@ -202,9 +170,10 @@ fail_alloc_devmem:
 }
 
 static void free_pseud_data(struct pseud_data *pseud_data,
-                            const struct platform_device *pdev)
+                            struct platform_device *pdev)
 {
-    free_pseud_sysfs(pseud_data, pdev);
+    sysfs_remove_group(&pdev->dev.kobj, &pseud_byte_access_group);
+    device_destroy(pseud_class, MKDEV(pseud_major, pdev->id));
     cdev_del(&pseud_data->cdev);
     kfree(pseud_data->devmem);
 }
