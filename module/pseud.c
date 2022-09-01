@@ -15,7 +15,6 @@
 #include <linux/mutex.h>
 #include <linux/uaccess.h>
 #include <linux/mm.h>
-#include <linux/sysfs.h>
 
 #include "pseud_defs.h"
 
@@ -143,7 +142,7 @@ static int init_pseud_data(struct pseud_data *pseud_data,
         goto fail_cdev_add;
     }
 
-    dev = device_create(pseud_class, NULL, devt, NULL, "%s_%d", pdev->name,
+    dev = device_create(pseud_class, &pdev->dev, devt, NULL, "%s_%d", pdev->name,
                         pdev->id);
     if (IS_ERR(dev)) {
         dev_err(&pdev->dev, "device_create failed\n");
@@ -151,16 +150,8 @@ static int init_pseud_data(struct pseud_data *pseud_data,
         goto fail_dev_create;
     }
 
-    err = sysfs_create_group(&pdev->dev.kobj, &pseud_byte_access_group);
-    if (err) {
-        dev_err(&pdev->dev, "sysfs_create_group failed\n");
-        goto fail_sysfs;
-    }
-
     return 0;
 
-fail_sysfs:
-    device_destroy(pseud_class, devt);
 fail_dev_create:
     cdev_del(&pseud_data->cdev);
 fail_cdev_add:
@@ -172,7 +163,6 @@ fail_alloc_devmem:
 static void free_pseud_data(struct pseud_data *pseud_data,
                             struct platform_device *pdev)
 {
-    sysfs_remove_group(&pdev->dev.kobj, &pseud_byte_access_group);
     device_destroy(pseud_class, MKDEV(pseud_major, pdev->id));
     cdev_del(&pseud_data->cdev);
     kfree(pseud_data->devmem);
@@ -396,6 +386,7 @@ static struct platform_device pseud_devs_reg[] = {
         .id = 0,
         .dev = {
             .release = pseud_device_release,
+            .groups = pseud_byte_access_groups,
         }
     },
     {
@@ -403,6 +394,7 @@ static struct platform_device pseud_devs_reg[] = {
         .id = 1,
         .dev = {
             .release = pseud_device_release,
+            .groups = pseud_byte_access_groups,
         }
     },
     {
@@ -410,6 +402,7 @@ static struct platform_device pseud_devs_reg[] = {
         .id = 2,
         .dev = {
             .release = pseud_device_release,
+            .groups = pseud_byte_access_groups,
         }
     },
 };
