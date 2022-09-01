@@ -43,13 +43,20 @@ $ sudo insmod pseud.ko
 > ```
 > /dev/pseud_0  /dev/pseud_1  /dev/pseud_2
 > ```
-> Вывод команды `ls /sys/class/pseud/`:
+> Вывод команды `ls /sys/class/pseud/pseud_*`:
 > ```
-> pseud_0  pseud_1  pseud_2
+> /sys/class/pseud/pseud_0:
+> dev  device  power  subsystem  uevent
+> 
+> /sys/class/pseud/pseud_1:
+> dev  device  power  subsystem  uevent
+> 
+> /sys/class/pseud/pseud_2:
+> dev  device  power  subsystem  uevent
 > ```
-> Вывод команды `ls /sys/class/pseud/pseud_0`:
+> Вывод команды `ls /sys/class/pseud/pseud_0/device`:
 > ```
-> dev  power  subsystem  uevent
+> address  driver  driver_override  modalias  power  pseud  subsystem  uevent  value
 > ```
 > Вывод команды `ls /sys/devices/platform/pseud.*`:
 > ```
@@ -145,16 +152,15 @@ rld!
 [14324.784503] pseud_read: pseud_1 (read 5 bytes)
 [14324.784505] pseud_read: pseud_1 (read 0 bytes)
 [14324.784510] pseud_release: pseud_1
-
 ```
 
 ## Атрибуты sysfs
 ```
-$ echo "10" | sudo tee /sys/class/pseud/pseud_2/address
-$ cat /sys/class/pseud/pseud_2/value
+$ echo "10" | sudo tee /sys/devices/platform/pseud.2/address
+$ cat /sys/devices/platform/pseud.2/value
 0
-$ echo "255" | sudo tee /sys/class/pseud/pseud_2/value
-$ cat /sys/class/pseud/pseud_2/value
+$ echo "255" | sudo tee /sys/devices/platform/pseud.2/value
+$ cat /sys/devices/platform/pseud.2/value
 255
 ```
 
